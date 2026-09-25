@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import HookahArt from './HookahArt';
+import SupportDev, { supportSnoozed } from '@/components/SupportDev';
 import { HOOKAHS, getHookah } from '@/lib/hookahs';
 import { FLAVOURS, getFlavour, mixHex } from '@/lib/flavours';
 import { SmokeField } from '@/lib/smoke';
@@ -66,6 +67,8 @@ export default function Experience({
   const [sound, setSound] = useState(true);
   const [hard, setHard] = useState(false);
   const [smokeTone, setSmokeTone] = useState(0); // index into SMOKE_TONES
+  const [support, setSupport] = useState(false);
+  const supportShown = useRef(false);
   const [mounted, setMounted] = useState(false);
   const [camCard, setCamCard] = useState(true);
 
@@ -241,6 +244,15 @@ export default function Experience({
   }, [autoCamera, initialStream, mounted, startCamera]);
 
   useEffect(() => () => trackerRef.current?.stop(), []);
+
+  /* ── support popup: drifts in after the third puff ──────── */
+  useEffect(() => {
+    if (!mounted || supportShown.current) return;
+    if (puffs < 3 || supportSnoozed()) return;
+    supportShown.current = true;
+    const t = window.setTimeout(() => setSupport(true), 2600);
+    return () => window.clearTimeout(t);
+  }, [puffs, mounted]);
 
   /* ── the breath ─────────────────────────────────────────── */
   const countPuff = useCallback(() => {
@@ -773,6 +785,16 @@ export default function Experience({
                 <b>Camera &amp; privacy</b>
                 <small>Nothing leaves your device — here is the detail</small>
               </Link>
+              <button
+                className="menu-link support"
+                onClick={() => {
+                  setModal(null);
+                  setSupport(true);
+                }}
+              >
+                <b>Support Dev Harsh ❤</b>
+                <small>UPI tip to the one person who builds this — pmharsh@fam</small>
+              </button>
               <button className="menu-link" onClick={onExit}>
                 <b>Leave the baithak</b>
                 <small>Close the lounge and read the site</small>
@@ -781,6 +803,9 @@ export default function Experience({
           </div>
         </div>
       )}
+
+      {/* ── support the developer ─────────────────────────── */}
+      <SupportDev open={support} onClose={() => setSupport(false)} autoHide={16} />
 
       {/* ── pickers ───────────────────────────────────────── */}
       {modal === 'hookah' && (
