@@ -1,0 +1,21 @@
+# Free cron with no third party: GitHub pings the site every 10 minutes.
+# Set a repo variable SITE_URL (Settings → Secrets and variables → Actions → Variables)
+# to your live URL, e.g. https://hookah-baithak.onrender.com
+name: keepalive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/ping
+        run: |
+          URL="${{ vars.SITE_URL }}"
+          if [ -z "$URL" ]; then echo "SITE_URL variable is not set — skipping."; exit 0; fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$URL/api/ping")
+          echo "$URL/api/ping -> $code"
+          [ "$code" = "200" ]

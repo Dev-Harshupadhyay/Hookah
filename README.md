@@ -125,3 +125,23 @@ Shared mouthpieces spread infections. Nothing here is an encouragement to smoke.
 ## Licence
 
 MIT — see `LICENSE`.
+
+## Keeping it awake
+
+Free hosts sleep after ~15 minutes of silence and the next visitor eats a ~50s cold boot.
+The app ships a keep-alive endpoint for that:
+
+| Route | Method | Answer |
+| --- | --- | --- |
+| `/api/ping` | `GET` / `POST` / `HEAD` | `200 OK`, tiny JSON (`{"ok":true,...}`), `no-store`, `noindex` |
+| `/api/health` | `GET` / `HEAD` | `200 OK`, alias for uptime monitors |
+
+Pick one of these and you are set:
+
+* **cron-job.org** — new cron job → URL `https://<your-site>/api/ping`, every 10 minutes, expect status `200`.
+* **GitHub Actions** — `.github/workflows/keepalive.yml` is already in the repo; just add a repo variable `SITE_URL`.
+* **Flask sidecar** — `keepalive/` is a ~40 line Flask service that answers `200 OK` itself *and* pokes the main site every `PING_INTERVAL` seconds. See `keepalive/README.md`.
+
+```bash
+curl -i https://<your-site>/api/ping
+```
