@@ -9,6 +9,8 @@ runs entirely on your own device.
 
 > 18+ · simulation only · **Smoking is injurious to health.**
 
+![The lounge mid-draw: the pipe held to the mouth, coals glowing, water bubbling](docs/screenshot-lounge.png)
+
 ---
 
 ## What makes it work
