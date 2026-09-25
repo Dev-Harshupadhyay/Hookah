@@ -133,7 +133,7 @@ The app ships a keep-alive endpoint for that:
 
 | Route | Method | Answer |
 | --- | --- | --- |
-| `/api/ping` | `GET` / `POST` / `HEAD` | `200 OK`, tiny JSON (`{"ok":true,...}`), `no-store`, `noindex` |
+| `/api/ping` | `GET` / `POST` / `HEAD` | `200 OK`. A browser gets a page with a big green **200 OK**, uptime and timestamp; curl and cron jobs get the tiny JSON (`{"ok":true,...}`). `no-store`, `noindex`. |
 | `/api/health` | `GET` / `HEAD` | `200 OK`, alias for uptime monitors |
 
 Pick one of these and you are set:
