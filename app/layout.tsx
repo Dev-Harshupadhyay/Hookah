@@ -3,6 +3,7 @@ import { Fraunces, Inter } from 'next/font/google';
 import './globals.css';
 import SiteNav from '@/components/SiteNav';
 import SiteFooter from '@/components/SiteFooter';
+import { SITE_URL } from '@/lib/site';
 
 const display = Fraunces({
   subsets: ['latin'],
@@ -13,7 +14,7 @@ const display = Fraunces({
 
 const body = Inter({ subsets: ['latin'], variable: '--font-body', display: 'swap' });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://hookah-baithak.vercel.app';
+
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

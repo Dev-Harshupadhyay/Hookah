@@ -66,8 +66,15 @@ then uncomment `NEXT_PUBLIC_MP_WASM`, `NEXT_PUBLIC_HAND_MODEL` and `NEXT_PUBLIC_
 
 ## Deploy
 
-**Vercel** (recommended): import the repo, set `NEXT_PUBLIC_SITE_URL`, deploy. Nothing else to
+**Vercel**: import the repo, optionally set `NEXT_PUBLIC_SITE_URL`, deploy. Nothing else to
 configure — no server state, no database.
+
+**Render**: the repo ships a `render.yaml` blueprint. Render injects `PORT` (usually 10000) and
+`npm run start` binds to it on `0.0.0.0`, so the "scanning for open port" loop can't happen.
+Build `npm ci && npm run build`, start `npm run start`.
+
+`NEXT_PUBLIC_SITE_URL` is optional everywhere: an empty or missing value falls back to the
+platform URL (`VERCEL_URL`) and then to localhost, instead of breaking the build.
 
 Camera access requires **HTTPS** (or `localhost`). Inside an `<iframe>` the embed needs
 `allow="camera"`, so prefer opening the site in a real tab.

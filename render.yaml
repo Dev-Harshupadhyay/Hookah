@@ -1,0 +1,19 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+# Render injects PORT (usually 10000); `npm run start` binds to it on 0.0.0.0.
+services:
+  - type: web
+    name: hookah-baithak
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1
+      # Set this to the URL Render gives you (drives canonicals, OG, sitemap).
+      # Safe to leave unset — the app falls back instead of crashing.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false

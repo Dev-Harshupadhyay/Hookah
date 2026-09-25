@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "dev": "next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "next build",
-    "start": "next start -H 0.0.0.0 -p 3000",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "lint": "next lint",
     "vendor:models": "node scripts/vendor-models.mjs"
   },
@@ -22,5 +22,8 @@
     "typescript": "^5.9.3"
   },
   "description": "A camera-based virtual hookah lounge \u2014 MediaPipe hand tracking, 12 Indian hookahs, 20 desi flavours. No tobacco, no nicotine.",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.18"
+  }
 }
