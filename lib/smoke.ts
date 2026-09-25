@@ -194,6 +194,82 @@ export class SmokeField {
     }
   }
 
+  /**
+   * A continuous breath. Call this every frame while the mouth is open:
+   * `amount` (0..1) is how wide the mouth is, `power` (0..1) is how much is
+   * left in the lungs. The stream thins out as the lungs empty.
+   */
+  breathe(
+    mouth: { x: number; y: number },
+    nose: { x: number; y: number } | null,
+    amount: number,
+    power: number,
+    hard = false,
+  ) {
+    const a = Math.max(0, Math.min(1, amount));
+    const p = Math.max(0, Math.min(1, power));
+    if (a <= 0.02 || p <= 0.01) return;
+
+    const push = (hard ? 4.2 : 3.0) * (0.35 + a * 0.75) * (0.35 + p * 0.75);
+    const count = Math.max(1, Math.round((hard ? 3.4 : 2.4) * (0.35 + a) * (0.4 + p)));
+
+    for (let i = 0; i < count; i++) {
+      this.spawn({
+        x: mouth.x,
+        y: mouth.y + 2,
+        angle: -Math.PI / 2 + 0.1 + (Math.random() - 0.5) * 0.25,
+        spread: 0.22 + a * 0.3,
+        speed: push,
+        size: (hard ? 20 : 15) * (0.6 + a * 0.7),
+        alpha: (hard ? 0.26 : 0.21) * (0.5 + p * 0.6),
+        grow: hard ? 1.0 : 0.82,
+        life: (hard ? 165 : 135) * (0.7 + p * 0.5),
+        perFrame: 0,
+        frames: 0,
+        tint: this.tintColor,
+      });
+    }
+
+    // body of the cloud, slow and wide, a little behind the jet
+    if (Math.random() < 0.7) {
+      this.spawn({
+        x: mouth.x,
+        y: mouth.y + 6,
+        angle: -Math.PI / 2,
+        spread: 1.2,
+        speed: 0.55 + a * 0.5,
+        size: (hard ? 34 : 26) * (0.7 + a * 0.5),
+        alpha: 0.1 * (0.5 + p * 0.6),
+        grow: 1.25,
+        life: 230,
+        perFrame: 0,
+        frames: 0,
+        tint: this.tintColor,
+      });
+    }
+
+    // nostrils only really go when the lungs are full and the mouth is open
+    if (nose && p > 0.25 && Math.random() < 0.55 + a * 0.25) {
+      for (const side of [-1, 1]) {
+        this.spawn({
+          x: nose.x + side * (hard ? 9 : 7),
+          y: nose.y + 4,
+          angle: Math.PI / 2 + side * 0.18,
+          spread: 0.09,
+          speed: (hard ? 3.0 : 2.3) * (0.5 + p * 0.6),
+          size: hard ? 9 : 7,
+          alpha: (hard ? 0.2 : 0.16) * (0.5 + p * 0.5),
+          grow: 0.5,
+          life: hard ? 120 : 100,
+          perFrame: 0,
+          frames: 0,
+          tint: this.tintColor,
+        });
+      }
+    }
+    this.ensure();
+  }
+
   /** thin wisp off the coals */
   wisp(x: number, y: number, tint: string | null) {
     this.parts.push({

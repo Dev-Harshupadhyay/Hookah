@@ -22,7 +22,18 @@ interface Live {
 const STEPS = [
   'Close your hand around the pipe to pick it up.',
   'Bring it to your mouth — it locks on. Hold and breathe in.',
-  'Open your mouth and let the cloud out.',
+  'Now open your mouth and blow it out, slowly.',
+];
+
+/** smoke is white by default; these are the optional tints */
+const SMOKE_TONES: { name: string; color: string | null; amount: number }[] = [
+  { name: 'White', color: null, amount: 0 },
+  { name: 'Flavour', color: 'flavour', amount: 0.14 },
+  { name: 'Rose', color: '#ff6f9c', amount: 0.32 },
+  { name: 'Mint', color: '#3fe0c0', amount: 0.32 },
+  { name: 'Blue', color: '#5aa9ff', amount: 0.32 },
+  { name: 'Gold', color: '#ffc75a', amount: 0.32 },
+  { name: 'Violet', color: '#b07bff', amount: 0.32 },
 ];
 
 export default function Experience({
@@ -54,6 +65,7 @@ export default function Experience({
   });
   const [sound, setSound] = useState(true);
   const [hard, setHard] = useState(false);
+  const [smokeTone, setSmokeTone] = useState(0); // index into SMOKE_TONES
   const [mounted, setMounted] = useState(false);
   const [camCard, setCamCard] = useState(true);
 
@@ -91,8 +103,12 @@ export default function Experience({
   glowRef.current = glowColor;
 
   useEffect(() => {
-    if (smokeRef.current) smokeRef.current.tintColor = glowColor;
-  }, [glowColor, mounted]);
+    const f = smokeRef.current;
+    if (!f) return;
+    const tone = SMOKE_TONES[smokeTone];
+    f.tintColor = tone.color === 'flavour' ? glowColor : tone.color;
+    f.tintAmount = tone.amount;
+  }, [glowColor, smokeTone, mounted]);
 
   /* ── engine state, kept out of React for 60fps ──────────── */
   const eng = useRef({
@@ -102,6 +118,9 @@ export default function Experience({
     docked: false,
     pointerHeld: false,
     charge: 0,
+    lungs: 0,
+    blowing: false,
+    autoBlow: 0,
     intensity: 0,
     lastEmit: 0,
     lastSync: 0,
@@ -131,7 +150,6 @@ export default function Experience({
   useEffect(() => {
     if (!mounted || !smokeCanvasRef.current) return;
     const field = new SmokeField(smokeCanvasRef.current);
-    field.tintColor = glowRef.current;
     smokeRef.current = field;
     const onResize = () => field.resize();
     window.addEventListener('resize', onResize);
@@ -224,24 +242,12 @@ export default function Experience({
 
   useEffect(() => () => trackerRef.current?.stop(), []);
 
-  /* ── the exhale ─────────────────────────────────────────── */
-  const exhale = useCallback(
-    (mouth: { x: number; y: number }, nose: { x: number; y: number }, open: number, charge: number) => {
-      const smoke = smokeRef.current;
-      if (!smoke) return;
-      const isHard = hardRef.current;
-      const strength = Math.min(1.6, 0.5 + charge) * (isHard ? 1.35 : 1);
-      const colour = glowRef.current;
-      // mouth: wide open → a real cloud, closed → a thin escape
-      smoke.mouthPuff(mouth.x, mouth.y + 4, colour, strength * (0.45 + open * 0.9), isHard);
-      // nostrils always leak a little; open mouth pushes more through
-      smoke.noseJets(nose.x, nose.y + 6, colour, strength * (0.5 + open * 0.6), isHard);
-      eng.current.puffs += 1;
-      eng.current.step = 2;
-      setPuffs(eng.current.puffs);
-    },
-    [],
-  );
+  /* ── the breath ─────────────────────────────────────────── */
+  const countPuff = useCallback(() => {
+    eng.current.puffs += 1;
+    eng.current.step = 2;
+    setPuffs(eng.current.puffs);
+  }, []);
 
   /* ── main animation loop ────────────────────────────────── */
   useEffect(() => {
@@ -337,11 +343,10 @@ export default function Experience({
       } else if (e.docked && (dHandMouth > undockR || handLost || (!e.held && !camLive))) {
         e.docked = false;
         e.held = false;
-        if (e.charge > 0.3 && now - e.exhaleLock > 400) {
+        if (!camLive && e.lungs > 0.15 && now - e.exhaleLock > 400) {
           e.exhaleLock = now;
-          exhale(mouthPt, nosePt, mouthOpen, e.charge);
+          e.autoBlow = 1.1; // no face tracking → let it out on its own, slowly
         }
-        e.charge = 0;
       }
 
       if (e.docked) {
@@ -355,21 +360,42 @@ export default function Experience({
       e.mp.x += (e.target.x - e.mp.x) * ease;
       e.mp.y += (e.target.y - e.mp.y) * ease;
 
-      /* inhale while docked */
-      const inhaling = e.docked;
+      /* inhale while docked — the lungs fill up */
+      const inhaling = e.docked && mouthOpen < 0.45;
       if (inhaling) {
-        e.charge = Math.min(1.8, e.charge + dt);
+        e.lungs = Math.min(1.35, e.lungs + dt * 0.8);
+        e.charge = e.lungs;
         e.intensity = Math.min(1, e.intensity + dt * 1.8);
         if (e.step < 1) e.step = 1;
-        // an open mouth while docked also releases (mid-session puff)
-        if (mouthOpen > 0.55 && e.charge > 0.5 && now - e.exhaleLock > 900) {
-          e.exhaleLock = now;
-          exhale(mouthPt, nosePt, mouthOpen, e.charge);
-          e.charge = 0.15;
-        }
       } else {
         e.intensity = Math.max(0, e.intensity - dt * 1.1);
       }
+
+      /* blow it out — gradually, for as long as the mouth stays open */
+      const wantBlow = camLive ? mouthOpen > 0.22 : e.autoBlow > 0;
+      const blowAmount = camLive ? mouthOpen : 0.8;
+      if (wantBlow && e.lungs > 0.02) {
+        if (!e.blowing) {
+          e.blowing = true;
+          countPuff();
+        }
+        smokeRef.current?.breathe(
+          mouthPt,
+          nosePt,
+          blowAmount,
+          Math.min(1, e.lungs / 1.1),
+          hardRef.current,
+        );
+        e.lungs = Math.max(
+          0,
+          e.lungs - dt * (0.45 + blowAmount * 0.85) * (hardRef.current ? 1.25 : 1),
+        );
+        e.charge = e.lungs;
+        if (camLive && e.docked) e.docked = false; // blowing releases the pipe
+      } else {
+        e.blowing = false;
+      }
+      if (e.autoBlow > 0) e.autoBlow = Math.max(0, e.autoBlow - dt);
 
       /* coal wisps */
       if (now - e.lastEmit > (e.intensity > 0.3 ? 110 : 480)) {
@@ -379,7 +405,7 @@ export default function Experience({
           smokeRef.current?.wisp(
             ar.left - rect.left + ar.width * 0.5,
             ar.top - rect.top + ar.height * 0.12,
-            glowRef.current,
+            null,
           );
         }
       }
@@ -423,7 +449,7 @@ export default function Experience({
         c?.setAttribute('r', String(dockR));
         const arc = mouthRef.current.querySelector('path');
         if (arc) {
-          const frac = Math.min(1, e.charge / 1.4);
+          const frac = Math.min(1, e.lungs / 1.1);
           const r = dockR;
           const a0 = -Math.PI / 2;
           const a1 = a0 + frac * Math.PI * 2;
@@ -463,7 +489,7 @@ export default function Experience({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [mounted, hookah.art.hoseSide, bubble, exhale]);
+  }, [mounted, hookah.art.hoseSide, bubble, countPuff]);
 
   /* ── pointer fallback ───────────────────────────────────── */
   const onPointerDown = (ev: React.PointerEvent) => {
@@ -651,6 +677,26 @@ export default function Experience({
               title="How heavy the clouds are"
             >
               {hard ? 'Hard kash' : 'Simple kash'}
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => setSmokeTone((i) => (i + 1) % SMOKE_TONES.length)}
+              title="Smoke colour"
+            >
+              <span
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                  background:
+                    SMOKE_TONES[smokeTone].color === 'flavour'
+                      ? glowColor
+                      : (SMOKE_TONES[smokeTone].color ?? '#ffffff'),
+                  boxShadow: '0 0 0 1px rgba(0,0,0,.25)',
+                }}
+              />
+              Smoke: {SMOKE_TONES[smokeTone].name}
             </button>
             <button className="btn ghost" onClick={() => setSound((s) => !s)}>
               {sound ? 'Sound on' : 'Sound off'}

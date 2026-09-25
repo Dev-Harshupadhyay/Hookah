@@ -21,7 +21,8 @@ runs entirely on your own device.
 | Mouth position | MediaPipe `FaceDetector` (BlazeFace short-range), sampled every 3rd frame |
 | Grab detection | Fingertip-to-wrist spread **and** thumb/index pinch, normalised by hand span, with hysteresis so the pipe doesn't flicker |
 | Hookahs | One parametric SVG component (8 jar shapes × 6 stem styles × tray/inlay/glass options) |
-| Smoke | Canvas 2D particle field, additive blending, turbulence + buoyancy |
+| Smoke | Canvas 2D sprite particles (pre-rendered irregular puffs), curl-ish turbulence, buoyancy, drag. White by default with an optional tint — Flavour, Rose, Mint, Blue, Gold, Violet |
+| Breathing | Docking the pipe to your lips fills the lungs; opening your mouth blows it out *gradually* for as long as you hold it open, nose jets included, and the cloud dissolves |
 | Water | The jar takes the colour of your flavour blend, with animated bubbles while you inhale |
 | Sound | A bubbling bed synthesised live with WebAudio (no audio assets) |
 | Framework | Next.js 15 App Router, React 19, TypeScript, zero UI libraries |
