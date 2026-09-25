@@ -38,6 +38,8 @@ const FAQ = [
 export default function Home() {
   return (
     <>
+      {/* first visit: what this is → 18+ → camera → hookah, no clicks needed */}
+      <LoungeLauncher autoOpen />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{

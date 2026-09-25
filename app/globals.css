@@ -341,8 +341,8 @@ em {
 .hookah-anchor {
   position: absolute;
   bottom: 0;
-  left: 3vw;
-  height: min(64vh, 560px);
+  left: 2vw;
+  height: min(82vh, 780px);
   pointer-events: none;
   filter: drop-shadow(0 22px 40px rgba(0, 0, 0, 0.45));
 }
@@ -352,8 +352,8 @@ em {
 }
 @media (max-width: 720px) {
   .hookah-anchor {
-    height: 46vh;
-    left: -1vw;
+    height: 66vh;
+    left: -4vw;
   }
   .hud { padding: 10px; }
   .step-note { max-width: 56vw; font-size: 13px; }
@@ -624,3 +624,48 @@ em {
   .hud .btn { white-space: nowrap; }
   .hero-art-wrap { padding-bottom: 10px; }
 }
+
+/* hamburger */
+.burger {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(251, 246, 228, 0.28);
+  background: rgba(20, 18, 15, 0.45);
+  backdrop-filter: blur(8px);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 0;
+}
+.burger span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cream);
+}
+.burger:hover { background: rgba(251, 246, 228, 0.16); }
+
+.menu-modal { width: min(460px, 94vw); }
+.menu-links { display: grid; gap: 8px; margin-top: 18px; }
+.menu-link {
+  display: block;
+  text-align: left;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  background: var(--cream-2);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  width: 100%;
+}
+.menu-link:hover { transform: translateX(3px); border-color: var(--ink); }
+.menu-link b { font-family: var(--font-serif); font-weight: 500; font-size: 16px; display: block; }
+.menu-link small { color: var(--muted); font-size: 12.5px; }

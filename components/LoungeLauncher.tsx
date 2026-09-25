@@ -10,13 +10,18 @@ const KEY = 'hb-age-ok';
 export default function LoungeLauncher({
   label = 'Enter the baithak',
   variant = 'primary',
+  /** open the gate (and then the lounge) as soon as the page loads */
+  autoOpen = false,
 }: {
   label?: string;
   variant?: 'primary' | 'ghost' | 'plain';
+  autoOpen?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [gate, setGate] = useState(false);
   const [denied, setDenied] = useState(false);
+  /** ask for the camera the moment the lounge opens */
+  const [autoCamera, setAutoCamera] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = open || gate ? 'hidden' : '';
@@ -25,27 +30,47 @@ export default function LoungeLauncher({
     };
   }, [open, gate]);
 
-  const enter = useCallback(() => {
+  const enter = useCallback((withCamera: boolean) => {
     const ok = typeof window !== 'undefined' && window.localStorage.getItem(KEY) === '1';
+    setAutoCamera(withCamera);
     if (ok) setOpen(true);
     else setGate(true);
   }, []);
 
+  // Esc closes the gate for people who only want to read
+  useEffect(() => {
+    if (!gate) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setGate(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [gate]);
+
+  // straight in on first paint: what this is → 18+ → camera → hookah
+  useEffect(() => {
+    if (!autoOpen) return;
+    const id = setTimeout(() => enter(true), 120);
+    return () => clearTimeout(id);
+  }, [autoOpen, enter]);
+
   return (
     <>
-      <button
-        className={`btn ${variant === 'plain' ? '' : variant}`}
-        onClick={enter}
-        data-analytics="enter-lounge"
-      >
-        {label} ↗
-      </button>
+      {!autoOpen && (
+        <button
+          className={`btn ${variant === 'plain' ? '' : variant}`}
+          onClick={() => enter(true)}
+          data-analytics="enter-lounge"
+        >
+          {label} ↗
+        </button>
+      )}
 
       {gate && (
         <div className="age-gate" role="dialog" aria-modal="true" aria-label="Age check">
-          <div style={{ maxWidth: 640 }}>
+          <div style={{ maxWidth: 660 }}>
             <div className="eyebrow" style={{ color: 'rgba(251,246,228,.55)' }}>
-              Hookah Baithak · 18+
+              Hookah Baithak · the online hookah lounge · 18+
             </div>
             {denied ? (
               <>
@@ -53,7 +78,13 @@ export default function LoungeLauncher({
                   Come back <em>later.</em>
                 </h1>
                 <p>This lounge is for adults only. Nothing to see here yet.</p>
-                <button className="btn ghost" onClick={() => setGate(false)}>
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setGate(false);
+                    setDenied(false);
+                  }}
+                >
                   Back to the site
                 </button>
               </>
@@ -63,9 +94,10 @@ export default function LoungeLauncher({
                   Are you <em>18 or older?</em>
                 </h1>
                 <p>
-                  Hookah Baithak is a virtual hookah lounge that runs in your browser. No tobacco,
-                  no nicotine, no real smoke — a simulation made for adults, and not an invitation
-                  to smoke. Smoking is injurious to health.
+                  This is a virtual hookah you smoke with your own hand. Say yes, allow the camera,
+                  and the pipe follows your fist — bring it to your mouth, hold, then open your
+                  mouth and blow the cloud out. No tobacco, no nicotine, no real smoke. Nothing is
+                  recorded; the camera never leaves your device. Smoking is injurious to health.
                 </p>
                 <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button
@@ -76,19 +108,33 @@ export default function LoungeLauncher({
                       setOpen(true);
                     }}
                   >
-                    Yes, I am 18 or older
+                    Yes, I am 18 — allow camera &amp; smoke
+                  </button>
+                  <button
+                    className="btn ghost"
+                    onClick={() => {
+                      window.localStorage.setItem(KEY, '1');
+                      setGate(false);
+                      setAutoCamera(false);
+                      setOpen(true);
+                    }}
+                  >
+                    Yes, but without the camera
                   </button>
                   <button className="btn ghost" onClick={() => setDenied(true)}>
                     No
                   </button>
                 </div>
+                <p style={{ fontSize: 12.5, opacity: 0.55, marginTop: 20 }}>
+                  Just browsing? Press Esc or “No” to read the site instead.
+                </p>
               </>
             )}
           </div>
         </div>
       )}
 
-      {open && <Experience onExit={() => setOpen(false)} />}
+      {open && <Experience onExit={() => setOpen(false)} autoCamera={autoCamera} />}
     </>
   );
 }

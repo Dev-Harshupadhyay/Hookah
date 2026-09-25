@@ -4,9 +4,10 @@
  * Hand + face tracking built on Google MediaPipe Tasks Vision.
  *
  *  · HandLandmarker  → 21 landmarks, used for grab detection + pipe position
- *  · FaceDetector    → BlazeFace keypoints, used to find the mouth
+ *  · FaceLandmarker  → 478 landmarks, used for the mouth, the nose and how
+ *                      wide the mouth is open (that drives the exhale)
  *
- * Everything runs on-device in a WebGL/WASM worker. No frame ever leaves the browser.
+ * Everything runs on-device in WASM/WebGL. No frame ever leaves the browser.
  */
 
 export const MEDIAPIPE_WASM =
@@ -18,7 +19,7 @@ export const HAND_MODEL =
 
 export const FACE_MODEL =
   process.env.NEXT_PUBLIC_FACE_MODEL ??
-  'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
 export interface Point {
   x: number; // normalised 0..1 in *video* space (not mirrored)
@@ -34,7 +35,10 @@ export interface TrackingFrame {
   grabbing: boolean;
   facePresent: boolean;
   mouth: Point;
-  /** face box width, used to scale the pipe */
+  nose: Point;
+  /** 0 = closed lips, 1 = wide open mouth */
+  mouthOpen: number;
+  /** face height in normalised units, used to scale distances */
   faceScale: number;
   fps: number;
 }
@@ -58,7 +62,9 @@ export class Tracker {
     grabbing: false,
     facePresent: false,
     mouth: { x: 0.5, y: 0.5 },
-    faceScale: 0.25,
+    nose: { x: 0.5, y: 0.44 },
+    mouthOpen: 0,
+    faceScale: 0.3,
     fps: 0,
   };
 
@@ -97,11 +103,7 @@ export class Tracker {
     this.set('requesting-camera');
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
     } catch (err: any) {
@@ -132,10 +134,12 @@ export class Tracker {
         minTrackingConfidence: 0.5,
       });
 
-      this.face = await vision.FaceDetector.createFromOptions(fileset, {
+      this.face = await vision.FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: FACE_MODEL, delegate: 'GPU' },
         runningMode: 'VIDEO',
-        minDetectionConfidence: 0.4,
+        numFaces: 1,
+        outputFaceBlendshapes: false,
+        outputFacialTransformationMatrixes: false,
       });
     } catch (err: any) {
       this.set('error', err?.message ?? 'Could not load the tracking models.');
@@ -166,12 +170,11 @@ export class Tracker {
       const lm = res?.landmarks?.[0];
       if (lm) {
         const wrist = lm[0];
-        const mcp = lm[9]; // middle finger base
+        const mcp = lm[9];
         const tips = [lm[8], lm[12], lm[16], lm[20]];
         const thumb = lm[4];
         const index = lm[8];
 
-        // hand size used to normalise distances
         const span = Math.hypot(wrist.x - mcp.x, wrist.y - mcp.y) || 0.001;
         const avgTip =
           tips.reduce((s, t) => s + Math.hypot(t.x - wrist.x, t.y - wrist.y), 0) / tips.length;
@@ -189,7 +192,7 @@ export class Tracker {
         f.hand.x = lerp(f.hand.x, cx, 0.45);
         f.hand.y = lerp(f.hand.y, cy, 0.45);
         f.closure = lerp(f.closure, closure, 0.4);
-        f.grabbing = f.closure > (f.grabbing ? 0.4 : 0.6); // hysteresis
+        f.grabbing = f.closure > (f.grabbing ? 0.38 : 0.58); // hysteresis
       } else {
         f.handPresent = false;
         f.grabbing = false;
@@ -199,25 +202,31 @@ export class Tracker {
       /* frame skipped */
     }
 
-    // ── face (every 3rd frame is plenty) ─────────────────────
-    if (this.faceEvery++ % 3 === 0) {
+    // ── face (every other frame) ─────────────────────────────
+    if (this.faceEvery++ % 2 === 0) {
       try {
         const res = this.face?.detectForVideo(v, ts);
-        const det = res?.detections?.[0];
-        if (det) {
-          const kp = det.keypoints ?? [];
-          const box = det.boundingBox;
-          // BlazeFace keypoint 3 = mouth centre
-          const mouth = kp[3] ?? {
-            x: (box.originX + box.width / 2) / v.videoWidth,
-            y: (box.originY + box.height * 0.78) / v.videoHeight,
-          };
+        const lm = res?.faceLandmarks?.[0];
+        if (lm) {
+          const upper = lm[13]; // inner top lip
+          const lower = lm[14]; // inner bottom lip
+          const top = lm[10]; // forehead
+          const chin = lm[152];
+          const noseTip = lm[1];
+          const faceH = Math.hypot(top.x - chin.x, top.y - chin.y) || 0.001;
+          const gap = Math.hypot(upper.x - lower.x, upper.y - lower.y) / faceH;
+
           f.facePresent = true;
-          f.mouth.x = lerp(f.mouth.x, mouth.x, 0.35);
-          f.mouth.y = lerp(f.mouth.y, mouth.y, 0.35);
-          if (box) f.faceScale = lerp(f.faceScale, box.width / v.videoWidth, 0.2);
+          f.mouth.x = lerp(f.mouth.x, (upper.x + lower.x) / 2, 0.45);
+          f.mouth.y = lerp(f.mouth.y, (upper.y + lower.y) / 2, 0.45);
+          f.nose.x = lerp(f.nose.x, noseTip.x, 0.45);
+          f.nose.y = lerp(f.nose.y, noseTip.y, 0.45);
+          f.faceScale = lerp(f.faceScale, faceH, 0.2);
+          // gap ≈ 0.01 closed, ≈ 0.14 wide open
+          f.mouthOpen = lerp(f.mouthOpen, Math.min(1, Math.max(0, (gap - 0.025) / 0.1)), 0.5);
         } else {
           f.facePresent = false;
+          f.mouthOpen = lerp(f.mouthOpen, 0, 0.3);
         }
       } catch {
         /* frame skipped */

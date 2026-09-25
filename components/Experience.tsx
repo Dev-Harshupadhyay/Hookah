@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import HookahArt from './HookahArt';
@@ -12,18 +13,25 @@ type Mode = 'camera' | 'touch';
 
 interface Live {
   held: boolean;
+  docked: boolean;
   intensity: number;
   bubbling: boolean;
-  near: boolean;
+  charge: number;
 }
 
 const STEPS = [
   'Close your hand around the pipe to pick it up.',
-  'Bring it to your mouth and hold — breathe in.',
-  'Take it away and blow the smoke out.',
+  'Bring it to your mouth — it locks on. Hold and breathe in.',
+  'Open your mouth and let the cloud out.',
 ];
 
-export default function Experience({ onExit }: { onExit: () => void }) {
+export default function Experience({
+  onExit,
+  autoCamera = false,
+}: {
+  onExit: () => void;
+  autoCamera?: boolean;
+}) {
   const [mode, setMode] = useState<Mode>('touch');
   const [status, setStatus] = useState<TrackerStatus>('idle');
   const [statusDetail, setStatusDetail] = useState('');
@@ -31,11 +39,18 @@ export default function Experience({ onExit }: { onExit: () => void }) {
   const [fa, setFa] = useState('classic');
   const [fb, setFb] = useState<string | null>(null);
   const [balance, setBalance] = useState(50);
-  const [modal, setModal] = useState<null | 'hookah' | 'flavour'>(null);
+  const [modal, setModal] = useState<null | 'hookah' | 'flavour' | 'menu'>(null);
   const [puffs, setPuffs] = useState(0);
   const [step, setStep] = useState(0);
-  const [live, setLive] = useState<Live>({ held: false, intensity: 0, bubbling: false, near: false });
+  const [live, setLive] = useState<Live>({
+    held: false,
+    docked: false,
+    intensity: 0,
+    bubbling: false,
+    charge: 0,
+  });
   const [sound, setSound] = useState(true);
+  const [hard, setHard] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -53,6 +68,8 @@ export default function Experience({ onExit }: { onExit: () => void }) {
   const trackerRef = useRef<Tracker | null>(null);
   const smokeRef = useRef<SmokeField | null>(null);
   const audioRef = useRef<{ ctx: AudioContext; gain: GainNode } | null>(null);
+  const hardRef = useRef(hard);
+  hardRef.current = hard;
 
   const hookah = getHookah(hookahSlug);
   const flavA = getFlavour(fa);
@@ -66,20 +83,25 @@ export default function Experience({ onExit }: { onExit: () => void }) {
     () => (flavB ? mixHex(flavA.glow, flavB.glow, t) : flavA.glow),
     [flavA, flavB, t],
   );
+  const glowRef = useRef(glowColor);
+  glowRef.current = glowColor;
 
-  /* ── engine state kept out of React for 60fps ───────────── */
+  /* ── engine state, kept out of React for 60fps ──────────── */
   const eng = useRef({
     mp: { x: 0, y: 0 },
     target: { x: 0, y: 0 },
     held: false,
+    docked: false,
     pointerHeld: false,
     charge: 0,
     intensity: 0,
     lastEmit: 0,
     lastSync: 0,
+    noHandSince: 0,
     started: false,
     puffs: 0,
     step: 0,
+    exhaleLock: 0,
   });
 
   /* ── share / restore state from the URL ─────────────────── */
@@ -99,22 +121,26 @@ export default function Experience({ onExit }: { onExit: () => void }) {
 
   /* ── smoke canvas ───────────────────────────────────────── */
   useEffect(() => {
-    if (!smokeCanvasRef.current) return;
+    if (!mounted || !smokeCanvasRef.current) return;
     const field = new SmokeField(smokeCanvasRef.current);
     smokeRef.current = field;
     const onResize = () => field.resize();
     window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    const id = setTimeout(onResize, 120); // after layout settles
     return () => {
+      clearTimeout(id);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
       field.destroy();
       smokeRef.current = null;
     };
-  }, []);
+  }, [mounted]);
 
-  /* ── audio (bubble hiss synthesised, no assets) ─────────── */
+  /* ── bubbling audio, synthesised ────────────────────────── */
   const bubble = useCallback(
     (on: boolean) => {
-      if (!sound) return;
+      if (!sound && !audioRef.current) return;
       if (!audioRef.current) {
         try {
           const Ctx = window.AudioContext || (window as any).webkitAudioContext;
@@ -146,7 +172,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
       const a = audioRef.current;
       if (!a) return;
       if (a.ctx.state === 'suspended') a.ctx.resume();
-      a.gain.gain.setTargetAtTime(on ? 0.22 : 0, a.ctx.currentTime, 0.12);
+      a.gain.gain.setTargetAtTime(on && sound ? 0.22 : 0, a.ctx.currentTime, 0.12);
     },
     [sound],
   );
@@ -157,7 +183,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
 
   /* ── camera + tracking ──────────────────────────────────── */
   const startCamera = useCallback(async () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || trackerRef.current) return;
     const tr = new Tracker(videoRef.current);
     tr.onStatus = (s, d) => {
       setStatus(s);
@@ -176,7 +202,33 @@ export default function Experience({ onExit }: { onExit: () => void }) {
     setStatus('idle');
   }, []);
 
+  // straight into the camera prompt when we came from the age gate
+  useEffect(() => {
+    if (!autoCamera || !mounted) return;
+    const id = setTimeout(() => void startCamera(), 350);
+    return () => clearTimeout(id);
+  }, [autoCamera, mounted, startCamera]);
+
   useEffect(() => () => trackerRef.current?.stop(), []);
+
+  /* ── the exhale ─────────────────────────────────────────── */
+  const exhale = useCallback(
+    (mouth: { x: number; y: number }, nose: { x: number; y: number }, open: number, charge: number) => {
+      const smoke = smokeRef.current;
+      if (!smoke) return;
+      const isHard = hardRef.current;
+      const strength = Math.min(1.6, 0.5 + charge) * (isHard ? 1.35 : 1);
+      const colour = glowRef.current;
+      // mouth: wide open → a real cloud, closed → a thin escape
+      smoke.mouthPuff(mouth.x, mouth.y + 4, colour, strength * (0.45 + open * 0.9), isHard);
+      // nostrils always leak a little; open mouth pushes more through
+      smoke.noseJets(nose.x, nose.y + 6, colour, strength * (0.5 + open * 0.6), isHard);
+      eng.current.puffs += 1;
+      eng.current.step = 2;
+      setPuffs(eng.current.puffs);
+    },
+    [],
+  );
 
   /* ── main animation loop ────────────────────────────────── */
   useEffect(() => {
@@ -197,9 +249,10 @@ export default function Experience({ onExit }: { onExit: () => void }) {
       const py = pr.top - rect.top + pr.height / 2;
 
       const e = eng.current;
+      const rest = { x: px + rect.width * 0.16, y: py + rect.height * 0.14 };
       if (!e.started) {
-        e.mp = { x: px + 150, y: py + 120 };
-        e.target = { ...e.mp };
+        e.mp = { ...rest };
+        e.target = { ...rest };
         e.started = true;
       }
 
@@ -210,7 +263,10 @@ export default function Experience({ onExit }: { onExit: () => void }) {
 
       let handPt: { x: number; y: number } | null = null;
       let mouthPt: { x: number; y: number } | null = null;
+      let nosePt: { x: number; y: number } | null = null;
       let grabbing = false;
+      let mouthOpen = 0;
+      let faceR = Math.min(rect.width, rect.height) * 0.13;
 
       if (camLive && f && video) {
         if (f.handPresent) {
@@ -219,13 +275,19 @@ export default function Experience({ onExit }: { onExit: () => void }) {
         }
         if (f.facePresent) {
           mouthPt = videoToScreen(f.mouth, rect, video.videoWidth, video.videoHeight);
+          nosePt = videoToScreen(f.nose, rect, video.videoWidth, video.videoHeight);
+          mouthOpen = f.mouthOpen;
+          faceR = Math.max(55, f.faceScale * rect.height * 0.42);
         }
       }
-      if (!mouthPt) mouthPt = { x: rect.width * 0.5, y: rect.height * 0.42 };
+      if (!mouthPt) mouthPt = { x: rect.width * 0.5, y: rect.height * 0.4 };
+      if (!nosePt) nosePt = { x: mouthPt.x, y: mouthPt.y - faceR * 0.42 };
 
-      const grabR = Math.max(70, Math.min(rect.width, rect.height) * 0.14);
+      const grabR = Math.max(80, Math.min(rect.width, rect.height) * 0.16);
+      const dockR = faceR * 0.85;
+      const undockR = dockR * 2.1;
 
-      // pick up / drop
+      /* pick up / drop */
       if (camLive) {
         if (handPt) {
           const d = Math.hypot(handPt.x - e.mp.x, handPt.y - e.mp.y);
@@ -235,52 +297,76 @@ export default function Experience({ onExit }: { onExit: () => void }) {
           } else if (!grabbing) {
             e.held = false;
           }
-        } else {
+        } else if (!e.docked) {
           e.held = false;
         }
       } else {
         e.held = e.pointerHeld;
+        if (e.pointerHeld) {
+          // target already set by pointer handlers
+        }
       }
 
-      if (!e.held) {
-        e.target = { x: px + 150, y: py + 120 };
+      /* dock to the mouth, and stay docked until pulled away */
+      const handOrTip = handPt && camLive ? handPt : e.target;
+      const dTipMouth = Math.hypot(e.target.x - mouthPt.x, e.target.y - mouthPt.y);
+      const dHandMouth = Math.hypot(handOrTip.x - mouthPt.x, handOrTip.y - mouthPt.y);
+
+      // hand left the frame while docked → treat it as taking the pipe away
+      if (camLive) {
+        if (handPt) e.noHandSince = 0;
+        else if (!e.noHandSince) e.noHandSince = now;
       }
+      const handLost = camLive && !!e.noHandSince && now - e.noHandSince > 550;
 
-      const ease = e.held ? 0.35 : 0.1;
-      e.mp.x += (e.target.x - e.mp.x) * ease;
-      e.mp.y += (e.target.y - e.mp.y) * ease;
-
-      // inhaling?
-      const mouthR = Math.max(60, Math.min(rect.width, rect.height) * 0.12);
-      const dm = Math.hypot(e.mp.x - mouthPt.x, e.mp.y - mouthPt.y);
-      const inhaling = e.held && dm < mouthR;
-
-      if (inhaling) {
-        e.charge = Math.min(1.6, e.charge + dt);
-        e.intensity = Math.min(1, e.intensity + dt * 1.8);
-        if (e.step < 1) e.step = 1;
-      } else {
-        e.intensity = Math.max(0, e.intensity - dt * 1.1);
-        if (e.charge > 0.35) {
-          const strength = Math.min(1.4, e.charge / 1.1);
-          smokeRef.current?.puff(mouthPt.x, mouthPt.y + 6, glowColor, strength);
-          e.puffs += 1;
-          e.step = 2;
-          setPuffs(e.puffs);
+      if (!e.docked && e.held && dTipMouth < dockR) {
+        e.docked = true;
+      } else if (e.docked && (dHandMouth > undockR || handLost || (!e.held && !camLive))) {
+        e.docked = false;
+        e.held = false;
+        if (e.charge > 0.3 && now - e.exhaleLock > 400) {
+          e.exhaleLock = now;
+          exhale(mouthPt, nosePt, mouthOpen, e.charge);
         }
         e.charge = 0;
       }
-      if (e.held && e.step < 1) e.step = Math.max(e.step, 0.5);
 
-      // coal wisps
-      if (now - e.lastEmit > (e.intensity > 0.3 ? 90 : 420)) {
+      if (e.docked) {
+        // pinned to the lips — small offset so the pipe touches the mouth
+        e.target = { x: mouthPt.x - faceR * 0.04, y: mouthPt.y + faceR * 0.1 };
+      } else if (!e.held) {
+        e.target = rest;
+      }
+
+      const ease = e.docked ? 0.42 : e.held ? 0.35 : 0.1;
+      e.mp.x += (e.target.x - e.mp.x) * ease;
+      e.mp.y += (e.target.y - e.mp.y) * ease;
+
+      /* inhale while docked */
+      const inhaling = e.docked;
+      if (inhaling) {
+        e.charge = Math.min(1.8, e.charge + dt);
+        e.intensity = Math.min(1, e.intensity + dt * 1.8);
+        if (e.step < 1) e.step = 1;
+        // an open mouth while docked also releases (mid-session puff)
+        if (mouthOpen > 0.55 && e.charge > 0.5 && now - e.exhaleLock > 900) {
+          e.exhaleLock = now;
+          exhale(mouthPt, nosePt, mouthOpen, e.charge);
+          e.charge = 0.15;
+        }
+      } else {
+        e.intensity = Math.max(0, e.intensity - dt * 1.1);
+      }
+
+      /* coal wisps */
+      if (now - e.lastEmit > (e.intensity > 0.3 ? 110 : 480)) {
         e.lastEmit = now;
         const ar = port.ownerSVGElement?.getBoundingClientRect();
         if (ar) {
           smokeRef.current?.wisp(
             ar.left - rect.left + ar.width * 0.5,
-            ar.top - rect.top + ar.height * 0.14,
-            glowColor,
+            ar.top - rect.top + ar.height * 0.12,
+            glowRef.current,
           );
         }
       }
@@ -291,50 +377,69 @@ export default function Experience({ onExit }: { onExit: () => void }) {
       const dist = Math.hypot(dx, dy);
       const sag = 40 + dist * 0.28;
       const side = hookah.art.hoseSide === 'right' ? 1 : -1;
-      const d = `M ${px} ${py} C ${px + side * 70} ${py + sag}, ${e.mp.x - dx * 0.25} ${e.mp.y + sag * 0.9}, ${e.mp.x} ${e.mp.y}`;
-      hoseRef.current?.setAttribute('d', d);
+      hoseRef.current?.setAttribute(
+        'd',
+        `M ${px} ${py} C ${px + side * 70} ${py + sag}, ${e.mp.x - dx * 0.25} ${e.mp.y + sag * 0.9}, ${e.mp.x} ${e.mp.y}`,
+      );
 
-      const ang = (Math.atan2(e.mp.y - (e.mp.y + sag * 0.9), e.mp.x - (e.mp.x - dx * 0.25)) * 180) / Math.PI;
+      const ang =
+        (Math.atan2(e.mp.y - (e.mp.y + sag * 0.9), e.mp.x - (e.mp.x - dx * 0.25)) * 180) / Math.PI;
       tipRef.current?.setAttribute('transform', `translate(${e.mp.x} ${e.mp.y}) rotate(${ang})`);
 
       if (ringRef.current) {
-        const showRing = camLive && !!handPt && !e.held;
+        const showRing = camLive && !!handPt && !e.held && !e.docked;
         ringRef.current.setAttribute('cx', String(e.mp.x));
         ringRef.current.setAttribute('cy', String(e.mp.y));
         ringRef.current.setAttribute('r', String(grabR));
-        ringRef.current.setAttribute('opacity', showRing ? '0.35' : e.held ? '0.12' : '0');
+        ringRef.current.setAttribute('opacity', showRing ? '0.35' : '0');
       }
       if (handRef.current) {
         handRef.current.setAttribute(
           'transform',
           handPt ? `translate(${handPt.x} ${handPt.y})` : 'translate(-999 -999)',
         );
-        handRef.current.setAttribute('opacity', grabbing ? '0.95' : '0.45');
+        handRef.current.setAttribute('opacity', grabbing ? '0.9' : '0.4');
       }
       if (mouthRef.current) {
         mouthRef.current.setAttribute('transform', `translate(${mouthPt.x} ${mouthPt.y})`);
         mouthRef.current.setAttribute(
           'opacity',
-          inhaling ? '0.15' : e.held ? '0.5' : camLive ? '0' : '0.18',
+          e.docked ? '0.55' : e.held ? '0.45' : camLive ? '0.12' : '0.2',
         );
         const c = mouthRef.current.querySelector('circle');
-        c?.setAttribute('r', String(mouthR));
+        c?.setAttribute('r', String(dockR));
+        const arc = mouthRef.current.querySelector('path');
+        if (arc) {
+          const frac = Math.min(1, e.charge / 1.4);
+          const r = dockR;
+          const a0 = -Math.PI / 2;
+          const a1 = a0 + frac * Math.PI * 2;
+          const large = frac > 0.5 ? 1 : 0;
+          arc.setAttribute(
+            'd',
+            frac < 0.01
+              ? ''
+              : `M ${Math.cos(a0) * r} ${Math.sin(a0) * r} A ${r} ${r} 0 ${large} 1 ${Math.cos(a1) * r} ${Math.sin(a1) * r}`,
+          );
+        }
       }
 
-      // throttled React sync (10fps) for the cheap visual state
+      /* throttled React sync (10fps) */
       if (now - e.lastSync > 100) {
         e.lastSync = now;
         setLive((p) => {
           const next = {
             held: e.held,
+            docked: e.docked,
             intensity: Math.round(e.intensity * 10) / 10,
             bubbling: inhaling,
-            near: !!handPt && Math.hypot(handPt.x - e.mp.x, handPt.y - e.mp.y) < grabR,
+            charge: Math.round(e.charge * 5) / 5,
           };
           return p.held === next.held &&
+            p.docked === next.docked &&
             p.intensity === next.intensity &&
             p.bubbling === next.bubbling &&
-            p.near === next.near
+            p.charge === next.charge
             ? p
             : next;
         });
@@ -345,7 +450,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [glowColor, hookah.art.hoseSide, bubble]);
+  }, [mounted, hookah.art.hoseSide, bubble, exhale]);
 
   /* ── pointer fallback ───────────────────────────────────── */
   const onPointerDown = (ev: React.PointerEvent) => {
@@ -354,7 +459,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
     const x = ev.clientX - rect.left;
     const y = ev.clientY - rect.top;
     const e = eng.current;
-    if (Math.hypot(x - e.mp.x, y - e.mp.y) < 110) {
+    if (Math.hypot(x - e.mp.x, y - e.mp.y) < 130) {
       e.pointerHeld = true;
       e.target = { x, y };
       (ev.target as Element).setPointerCapture?.(ev.pointerId);
@@ -389,7 +494,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
 
   const statusLine =
     status === 'requesting-camera'
-      ? 'Asking for your camera…'
+      ? 'Allow the camera to smoke with your hand…'
       : status === 'loading-models'
         ? 'Loading hand tracking…'
         : status === 'denied'
@@ -398,7 +503,9 @@ export default function Experience({ onExit }: { onExit: () => void }) {
             ? 'This browser has no camera API — drag mode on.'
             : status === 'error'
               ? statusDetail || 'Camera trouble — drag mode on.'
-              : '';
+              : mode === 'touch'
+                ? 'Drag mode — or turn the camera on.'
+                : '';
 
   const stage = (
     <div
@@ -414,8 +521,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
         <div
           className="layer"
           style={{
-            background:
-              'radial-gradient(90% 70% at 50% 25%, #2a2620 0%, #15130f 55%, #0a0907 100%)',
+            background: 'radial-gradient(90% 70% at 50% 25%, #2a2620 0%, #15130f 55%, #0a0907 100%)',
           }}
         />
       )}
@@ -440,13 +546,14 @@ export default function Experience({ onExit }: { onExit: () => void }) {
           d=""
           fill="none"
           stroke={hookah.art.colors.hose}
-          strokeWidth="9"
+          strokeWidth="10"
           strokeLinecap="round"
           opacity="0.95"
         />
         <circle ref={ringRef} cx="-99" cy="-99" r="80" fill="none" stroke="#fbf6e4" strokeWidth="1.5" opacity="0" />
         <g ref={mouthRef} opacity="0">
           <circle r="70" fill="none" stroke="#fbf6e4" strokeWidth="1.5" strokeDasharray="6 8" />
+          <path d="" fill="none" stroke={glowColor} strokeWidth="4" strokeLinecap="round" />
         </g>
         <g ref={tipRef}>
           <rect x="-14" y="-7" width="64" height="14" rx="7" fill={hookah.art.colors.accent} />
@@ -465,12 +572,7 @@ export default function Experience({ onExit }: { onExit: () => void }) {
           <div style={{ display: 'grid', gap: 8 }}>
             <button className="glass-card" onClick={() => setModal('hookah')}>
               <span style={{ width: 26, height: 40, display: 'grid', placeItems: 'center' }}>
-                <HookahArt
-                  hookah={hookah}
-                  waterColor={waterColor}
-                  glowColor={glowColor}
-                  className="mini"
-                />
+                <HookahArt hookah={hookah} waterColor={waterColor} glowColor={glowColor} />
               </span>
               <span>
                 <small>Pick your hookah</small>
@@ -497,15 +599,25 @@ export default function Experience({ onExit }: { onExit: () => void }) {
             </button>
           </div>
 
-          <div className="step-note">
-            <div className="eyebrow">Step {Math.min(3, step + 1)} of 3</div>
-            <div>{STEPS[Math.min(2, step)]}</div>
-            <div className="progress">
-              <i style={{ width: `${((Math.min(2, step) + 1) / 3) * 100}%` }} />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <div className="step-note">
+              <div className="eyebrow">Step {Math.min(3, step + 1)} of 3</div>
+              <div>{STEPS[Math.min(2, step)]}</div>
+              <div className="progress">
+                <i style={{ width: `${((Math.min(2, step) + 1) / 3) * 100}%` }} />
+              </div>
+              {statusLine && <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>{statusLine}</div>}
             </div>
-            {statusLine && (
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>{statusLine}</div>
-            )}
+            <button
+              className="burger"
+              onClick={() => setModal('menu')}
+              aria-label="Menu"
+              title="Menu"
+            >
+              <span />
+              <span />
+              <span />
+            </button>
           </div>
         </div>
 
@@ -520,28 +632,68 @@ export default function Experience({ onExit }: { onExit: () => void }) {
                 Turn on my camera
               </button>
             )}
+            <button
+              className="btn ghost"
+              onClick={() => setHard((h) => !h)}
+              title="How heavy the clouds are"
+            >
+              {hard ? 'Hard kash' : 'Simple kash'}
+            </button>
             <button className="btn ghost" onClick={() => setSound((s) => !s)}>
               {sound ? 'Sound on' : 'Sound off'}
             </button>
             <button className="btn ghost" onClick={share}>
               Share
             </button>
-            <button className="btn ghost" onClick={onExit}>
-              Leave the baithak
-            </button>
           </div>
-          <div
-            className="step-note"
-            style={{ textAlign: 'right', fontSize: 12.5, opacity: 0.85 }}
-          >
+          <div className="step-note" style={{ textAlign: 'right', fontSize: 12.5, opacity: 0.85 }}>
             <b style={{ fontSize: 22, fontFamily: 'var(--font-serif)' }}>{puffs}</b> puffs this
             session
-            <div style={{ opacity: 0.7 }}>
-              Nothing is recorded. The camera never leaves your device.
-            </div>
+            <div style={{ opacity: 0.7 }}>Nothing is recorded. The camera stays on your device.</div>
           </div>
         </div>
       </div>
+
+      {/* ── hamburger menu ────────────────────────────────── */}
+      {modal === 'menu' && (
+        <div className="modal-backdrop" onClick={() => setModal(null)}>
+          <div className="modal menu-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-x" onClick={() => setModal(null)} aria-label="Close">
+              ✕
+            </button>
+            <div className="eyebrow">Hookah Baithak</div>
+            <h2>
+              Explore, or <em>keep smoking.</em>
+            </h2>
+            <div className="menu-links">
+              <button className="menu-link" onClick={() => setModal(null)}>
+                <b>← Back to the hookah</b>
+                <small>Carry on with your session</small>
+              </button>
+              <Link className="menu-link" href="/hookahs" onClick={onExit}>
+                <b>The rack</b>
+                <small>12 Indian hookahs and where they come from</small>
+              </Link>
+              <Link className="menu-link" href="/flavours" onClick={onExit}>
+                <b>Flavours</b>
+                <small>The 20-flavour menu, and how blending works</small>
+              </Link>
+              <Link className="menu-link" href="/history" onClick={onExit}>
+                <b>History</b>
+                <small>The hookah was invented in Mughal India</small>
+              </Link>
+              <Link className="menu-link" href="/privacy" onClick={onExit}>
+                <b>Camera &amp; privacy</b>
+                <small>Nothing leaves your device — here is the detail</small>
+              </Link>
+              <button className="menu-link" onClick={onExit}>
+                <b>Leave the baithak</b>
+                <small>Close the lounge and read the site</small>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── pickers ───────────────────────────────────────── */}
       {modal === 'hookah' && (
@@ -632,7 +784,9 @@ export default function Experience({ onExit }: { onExit: () => void }) {
             </div>
             {flavB && (
               <div style={{ marginTop: 18 }}>
-                <div className="eyebrow">Make it your balance — {balance} / {100 - balance}</div>
+                <div className="eyebrow">
+                  Make it your balance — {balance} / {100 - balance}
+                </div>
                 <input
                   className="slider"
                   type="range"
