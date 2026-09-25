@@ -669,3 +669,23 @@ em {
 .menu-link:hover { transform: translateX(3px); border-color: var(--ink); }
 .menu-link b { font-family: var(--font-serif); font-weight: 500; font-size: 16px; display: block; }
 .menu-link small { color: var(--muted); font-size: 12.5px; }
+
+.cam-card {
+  position: absolute;
+  left: 50%;
+  bottom: 112px;
+  transform: translateX(-50%);
+  width: min(420px, 90vw);
+  background: rgba(251, 246, 228, 0.96);
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: var(--shadow-lg);
+  z-index: 5;
+  text-align: left;
+}
+.cam-card p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  margin: 8px 0 16px;
+}

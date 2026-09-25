@@ -92,27 +92,44 @@ export class Tracker {
     this.onStatus?.(s, detail);
   }
 
-  async start() {
+  /**
+   * @param existing a MediaStream already obtained inside a user gesture.
+   *        Browsers (especially mobile Safari) are far happier with that than
+   *        with a getUserMedia call fired from a timer.
+   */
+  async start(existing?: MediaStream | null) {
     this.stopped = false;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       this.set('unsupported', 'This browser cannot open a camera.');
       return;
     }
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      this.set('error', 'Cameras only work on https:// — open the secure link.');
+      return;
+    }
 
     // 1. camera
-    this.set('requesting-camera');
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-    } catch (err: any) {
-      const name = err?.name ?? '';
-      this.set(
-        name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'error',
-        name === 'NotFoundError' ? 'No camera found on this device.' : err?.message ?? 'Camera failed.',
-      );
-      return;
+    if (existing && existing.getVideoTracks().some((t) => t.readyState === 'live')) {
+      this.stream = existing;
+    } else {
+      this.set('requesting-camera');
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (err: any) {
+        const name = err?.name ?? '';
+        this.set(
+          name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'error',
+          name === 'NotFoundError'
+            ? 'No camera found on this device.'
+            : name === 'NotReadableError'
+              ? 'Another app is using the camera — close it and try again.'
+              : err?.message ?? 'Camera failed.',
+        );
+        return;
+      }
     }
 
     this.video.srcObject = this.stream;

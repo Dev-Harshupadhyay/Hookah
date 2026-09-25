@@ -28,9 +28,12 @@ const STEPS = [
 export default function Experience({
   onExit,
   autoCamera = false,
+  initialStream = null,
 }: {
   onExit: () => void;
   autoCamera?: boolean;
+  /** stream already granted in the click that opened the lounge */
+  initialStream?: MediaStream | null;
 }) {
   const [mode, setMode] = useState<Mode>('touch');
   const [status, setStatus] = useState<TrackerStatus>('idle');
@@ -52,6 +55,7 @@ export default function Experience({
   const [sound, setSound] = useState(true);
   const [hard, setHard] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [camCard, setCamCard] = useState(true);
 
   useEffect(() => setMounted(true), []);
 
@@ -85,6 +89,10 @@ export default function Experience({
   );
   const glowRef = useRef(glowColor);
   glowRef.current = glowColor;
+
+  useEffect(() => {
+    if (smokeRef.current) smokeRef.current.tintColor = glowColor;
+  }, [glowColor, mounted]);
 
   /* ── engine state, kept out of React for 60fps ──────────── */
   const eng = useRef({
@@ -123,6 +131,7 @@ export default function Experience({
   useEffect(() => {
     if (!mounted || !smokeCanvasRef.current) return;
     const field = new SmokeField(smokeCanvasRef.current);
+    field.tintColor = glowRef.current;
     smokeRef.current = field;
     const onResize = () => field.resize();
     window.addEventListener('resize', onResize);
@@ -182,17 +191,20 @@ export default function Experience({
   }, [sound, bubble]);
 
   /* ── camera + tracking ──────────────────────────────────── */
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (existing?: MediaStream | null) => {
     if (!videoRef.current || trackerRef.current) return;
     const tr = new Tracker(videoRef.current);
     tr.onStatus = (s, d) => {
       setStatus(s);
       setStatusDetail(d ?? '');
-      if (s === 'running') setMode('camera');
+      if (s === 'running') {
+        setMode('camera');
+        setCamCard(false);
+      }
       if (s === 'denied' || s === 'error' || s === 'unsupported') setMode('touch');
     };
     trackerRef.current = tr;
-    await tr.start();
+    await tr.start(existing ?? null);
   }, []);
 
   const stopCamera = useCallback(() => {
@@ -204,10 +216,11 @@ export default function Experience({
 
   // straight into the camera prompt when we came from the age gate
   useEffect(() => {
-    if (!autoCamera || !mounted) return;
-    const id = setTimeout(() => void startCamera(), 350);
+    if (!mounted) return;
+    if (!autoCamera && !initialStream) return;
+    const id = setTimeout(() => void startCamera(initialStream), 120);
     return () => clearTimeout(id);
-  }, [autoCamera, mounted, startCamera]);
+  }, [autoCamera, initialStream, mounted, startCamera]);
 
   useEffect(() => () => trackerRef.current?.stop(), []);
 
@@ -628,7 +641,7 @@ export default function Experience({
                 Camera off
               </button>
             ) : (
-              <button className="btn ghost" onClick={startCamera}>
+              <button className="btn ghost" onClick={() => void startCamera()}>
                 Turn on my camera
               </button>
             )}
@@ -653,6 +666,34 @@ export default function Experience({
           </div>
         </div>
       </div>
+
+      {/* ── camera prompt ─────────────────────────────────── */}
+      {camCard && mode === 'touch' && status !== 'requesting-camera' && status !== 'loading-models' && (
+        <div className="cam-card">
+          <div className="eyebrow">
+            {status === 'denied'
+              ? 'Camera blocked'
+              : status === 'error' || status === 'unsupported'
+                ? 'Camera unavailable'
+                : 'Smoke with your hand'}
+          </div>
+          <p>
+            {status === 'denied'
+              ? 'Your browser is blocking the camera for this site. Tap the lock icon in the address bar → Permissions → Camera → Allow, then hit retry.'
+              : status === 'error' || status === 'unsupported'
+                ? statusDetail || 'This browser will not give us a camera. Drag mode works fine.'
+                : 'Allow the camera and the pipe follows your real hand — close your fist, bring it to your lips, then open your mouth.'}
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn primary" onClick={() => void startCamera()}>
+              {status === 'denied' || status === 'error' ? 'Retry camera' : 'Allow camera'}
+            </button>
+            <button className="btn" onClick={() => setCamCard(false)}>
+              Drag it instead
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── hamburger menu ────────────────────────────────── */}
       {modal === 'menu' && (

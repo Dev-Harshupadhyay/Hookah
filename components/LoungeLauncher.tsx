@@ -22,6 +22,9 @@ export default function LoungeLauncher({
   const [denied, setDenied] = useState(false);
   /** ask for the camera the moment the lounge opens */
   const [autoCamera, setAutoCamera] = useState(false);
+  /** stream captured inside the click itself — browsers trust that far more */
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = open || gate ? 'hidden' : '';
@@ -50,7 +53,7 @@ export default function LoungeLauncher({
   // straight in on first paint: what this is → 18+ → camera → hookah
   useEffect(() => {
     if (!autoOpen) return;
-    const id = setTimeout(() => enter(true), 120);
+    const id = setTimeout(() => enter(false), 120);
     return () => clearTimeout(id);
   }, [autoOpen, enter]);
 
@@ -102,13 +105,28 @@ export default function LoungeLauncher({
                 <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button
                     className="btn"
-                    onClick={() => {
+                    disabled={asking}
+                    onClick={async () => {
                       window.localStorage.setItem(KEY, '1');
+                      setAsking(true);
+                      // the permission prompt must come straight out of this click
+                      let s: MediaStream | null = null;
+                      try {
+                        s = await navigator.mediaDevices.getUserMedia({
+                          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+                          audio: false,
+                        });
+                      } catch {
+                        s = null;
+                      }
+                      setStream(s);
+                      setAutoCamera(!!s);
+                      setAsking(false);
                       setGate(false);
                       setOpen(true);
                     }}
                   >
-                    Yes, I am 18 — allow camera &amp; smoke
+                    {asking ? 'Waiting for the camera…' : 'Yes, I am 18 — allow camera & smoke'}
                   </button>
                   <button
                     className="btn ghost"
@@ -134,7 +152,16 @@ export default function LoungeLauncher({
         </div>
       )}
 
-      {open && <Experience onExit={() => setOpen(false)} autoCamera={autoCamera} />}
+      {open && (
+        <Experience
+          onExit={() => {
+            setOpen(false);
+            setStream(null);
+          }}
+          autoCamera={autoCamera}
+          initialStream={stream}
+        />
+      )}
     </>
   );
 }
